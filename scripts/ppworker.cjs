@@ -293,6 +293,169 @@ const updateInfoPlist = async (
     fs.writeFileSync(infoPlistPath, plist.build(infoPlistData))
 }
 
+// Android paths
+const androidProjectPath = path.join(__dirname, '../android')
+const androidAppPath = path.join(androidProjectPath, 'app')
+const androidMainPath = path.join(androidAppPath, 'src/main')
+const androidManifestPath = path.join(androidMainPath, 'AndroidManifest.xml')
+const androidBuildGradlePath = path.join(androidAppPath, 'build.gradle.kts')
+const androidStringsPath = path.join(androidMainPath, 'res/values/strings.xml')
+const androidAssetsPath = path.join(androidMainPath, 'assets')
+
+const updateAndroidManifest = async (
+    showName,
+    debug,
+    webUrl,
+    isHtml,
+    safeArea,
+    userAgent,
+    launchImage,
+    screenOn,
+    startMethod
+) => {
+    try {
+        let content = fs.readFileSync(androidManifestPath, 'utf8')
+        const targetUrl =
+            startMethod === 'password' || startMethod === 'oncePwd'
+                ? 'https://www.password.com/'
+                : isHtml
+                ? 'https://www.pakeplus.com/'
+                : webUrl
+
+        const replaceMeta = (name, value) => {
+            const regex = new RegExp(
+                `<meta-data\\s+android:name="${name}"\\s+android:value="[^"]*"\\s*/>`
+            )
+            const next = content.replace(
+                regex,
+                `<meta-data\n            android:name="${name}"\n            android:value="${value}" />`
+            )
+            if (next !== content) {
+                content = next
+            }
+        }
+
+        replaceMeta('WEB_URL', targetUrl)
+        replaceMeta('DEBUG', debug ? 'true' : 'false')
+        replaceMeta('FULLSCREEN', safeArea === 'fullscreen' ? 'true' : 'false')
+        replaceMeta('LAUNCH_IMAGE', launchImage ? 'true' : 'false')
+        replaceMeta('SCREEN_ON', screenOn ? 'true' : 'false')
+        replaceMeta('USER_AGENT', userAgent || '')
+        replaceMeta('IS_HTML', isHtml ? 'true' : 'false')
+
+        fs.writeFileSync(androidManifestPath, content)
+        console.log('✅ Updated AndroidManifest.xml')
+    } catch (error) {
+        console.error('❌ Error updating AndroidManifest.xml:', error)
+    }
+}
+
+const copyAndroidAssets = async (debug, isHtml, startMethod) => {
+    try {
+        fs.ensureDirSync(androidAssetsPath)
+        // copy base js assets
+        fs.copySync(
+            path.join(__dirname, '../PakePlus/custom.js'),
+            path.join(androidAssetsPath, 'custom.js')
+        )
+        if (debug) {
+            fs.copySync(
+                path.join(__dirname, './assets/vConsole.js'),
+                path.join(androidAssetsPath, 'vConsole.js')
+            )
+        } else {
+            fs.removeSync(path.join(androidAssetsPath, 'vConsole.js'))
+        }
+
+        const wwwPath = path.join(__dirname, './www')
+        if (startMethod === 'password' || startMethod === 'oncePwd') {
+            // password entry becomes index.html
+            fs.copySync(
+                path.join(wwwPath, 'pppwd.html'),
+                path.join(androidAssetsPath, 'index.html')
+            )
+            console.log('📦 Password entry copied to Android assets/index.html')
+        } else if (isHtml) {
+            fs.copySync(wwwPath, androidAssetsPath)
+            console.log('📦 HTML assets copied to Android')
+        } else {
+            fs.removeSync(path.join(androidAssetsPath, 'index.html'))
+        }
+    } catch (error) {
+        console.error('❌ Error copying Android assets:', error)
+    }
+}
+
+const updateAndroidBuildGradle = async (applicationId, version, showName) => {
+    try {
+        let content = fs.readFileSync(androidBuildGradlePath, 'utf8')
+        content = content.replace(
+            /applicationId = "[^"]+"/,
+            `applicationId = "${applicationId}"`
+        )
+        content = content.replace(
+            /versionName = "[^"]+"/,
+            `versionName = "${version}"`
+        )
+        fs.writeFileSync(androidBuildGradlePath, content)
+        console.log(`✅ Updated Android build.gradle.kts: ${applicationId} v${version}`)
+    } catch (error) {
+        console.error('❌ Error updating Android build.gradle.kts:', error)
+    }
+}
+
+const updateAndroidStrings = async (showName) => {
+    try {
+        let content = fs.readFileSync(androidStringsPath, 'utf8')
+        content = content.replace(
+            /<string name="app_name">[^<]*<\/string>/,
+            `<string name="app_name">${showName}</string>`
+        )
+        fs.writeFileSync(androidStringsPath, content)
+        console.log(`✅ Updated Android strings.xml app_name: ${showName}`)
+    } catch (error) {
+        console.error('❌ Error updating Android strings.xml:', error)
+    }
+}
+
+const updateAndroidProject = async (androidConfig, phoneConfig) => {
+    if (!androidConfig) {
+        console.log('⚠️ No android config found, skipping Android update')
+        return
+    }
+    const {
+        name,
+        showName,
+        version,
+        webUrl,
+        id,
+        debug,
+        safeArea,
+        isHtml,
+    } = androidConfig
+    const {
+        webview,
+        launchImage,
+        screenOn,
+        startMethod,
+    } = phoneConfig
+
+    await updateAndroidManifest(
+        showName,
+        debug,
+        webUrl,
+        isHtml,
+        safeArea,
+        webview?.userAgent || '',
+        launchImage,
+        screenOn,
+        startMethod
+    )
+    await copyAndroidAssets(debug, isHtml, startMethod)
+    await updateAndroidBuildGradle(id, version, showName)
+    await updateAndroidStrings(showName)
+}
+
 const main = async () => {
     const {
         webview,
@@ -363,6 +526,10 @@ const main = async () => {
         screenOn,
         startMethod
     )
+
+    // update Android project
+    await updateAndroidProject(ppconfig.android, ppconfig.phone)
+
     // success
     console.log('✅ Worker Success')
 }
