@@ -39,6 +39,9 @@
         <meta-data
             android:name="USER_AGENT"
             android:value="" />
+        <meta-data
+            android:name="IS_HTML"
+            android:value="false" />
 
         <activity
             android:name=".MainActivity"

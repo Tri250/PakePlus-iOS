@@ -418,6 +418,20 @@ const updateAndroidStrings = async (showName) => {
     }
 }
 
+const writeAndroidConfig = async (androidConfig, phoneConfig) => {
+    try {
+        const config = {
+            android: androidConfig || {},
+            phone: phoneConfig || {},
+        }
+        const configPath = path.join(androidAssetsPath, 'config.json')
+        fs.writeFileSync(configPath, JSON.stringify(config, null, 4))
+        console.log('✅ Wrote Android config.json')
+    } catch (error) {
+        console.error('❌ Error writing Android config.json:', error)
+    }
+}
+
 const updateAndroidProject = async (androidConfig, phoneConfig) => {
     if (!androidConfig) {
         console.log('⚠️ No android config found, skipping Android update')
@@ -452,6 +466,7 @@ const updateAndroidProject = async (androidConfig, phoneConfig) => {
         startMethod
     )
     await copyAndroidAssets(debug, isHtml, startMethod)
+    await writeAndroidConfig(androidConfig, phoneConfig)
     await updateAndroidBuildGradle(id, version, showName)
     await updateAndroidStrings(showName)
 }

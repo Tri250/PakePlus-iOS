@@ -83,7 +83,19 @@
 | 液态玻璃效果 | 通过 | `LiquidGlassSurface`： translucent background + API 31+ `Modifier.blur` |
 | 状态栏/导航栏沉浸 | 通过 | edge-to-edge + 透明状态栏颜色 |
 
-## 8. 已知待完善项
+## 8. iOS 功能对齐检查 (iOS Parity)
+
+| iOS 文件 | Android 对应实现 | 状态 |
+|---|---|---|
+| `ContentView.swift`（全屏 WebView + 启动图） | `MainActivity.kt` 简单模式 | 通过 |
+| `WebView.swift`（WebView 配置/注入/下载/权限/手势） | `PakePlusWebView.kt` | 通过 |
+| `SideBarView.swift`（左侧抽屉菜单） | `ui/components/SideDrawer.kt` | 通过 |
+| `TabBarView.swift`（顶部标题栏 + 底部标签栏 + 弹出菜单） | `TopHeader.kt` + `BottomTabBar.kt` + `TopPopupMenu.kt` | 通过 |
+| `Info.plist` 配置读取 | `assets/config.json` + `ConfigLoader.kt` + manifest meta-data | 通过 |
+| `custom.js` / `vConsole.js` 注入 | `assets/custom.js` / `vConsole.js` + `evaluateJavascript` | 通过 |
+| `pppwd.html` 密码入口 | `ppworker.cjs` 复制为 `assets/index.html` | 通过 |
+
+## 9. 已知待完善项
 
 1. **Gradle Wrapper**：当前 `gradlew` 为委托到系统 Gradle 的回退脚本；生产环境建议运行 `gradle wrapper --gradle-version 8.7` 生成完整 wrapper jar。
 2. **图标资源**：mipmap PNG 为占位图，正式发布前应替换为按 `ppconfig.android.icon` 自动生成的多密度图标。

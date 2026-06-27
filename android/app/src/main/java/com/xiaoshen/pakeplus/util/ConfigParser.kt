@@ -10,13 +10,21 @@ object ConfigParser {
     fun parse(metaData: Bundle?): ManifestConfig {
         val bundle = metaData ?: Bundle()
         return ManifestConfig(
-            webUrl = bundle.getString("WEB_URL", DEFAULT_WEB_URL),
-            debug = bundle.getString("DEBUG", "false").toBooleanStrictOrNull() ?: false,
-            fullscreen = bundle.getString("FULLSCREEN", "false").toBooleanStrictOrNull() ?: false,
-            launchImage = bundle.getString("LAUNCH_IMAGE", "false").toBooleanStrictOrNull() ?: false,
-            screenOn = bundle.getString("SCREEN_ON", "false").toBooleanStrictOrNull() ?: false,
-            userAgent = bundle.getString("USER_AGENT", ""),
-            isHtml = bundle.getString("IS_HTML", "false").toBooleanStrictOrNull() ?: false
+            webUrl = parseString(bundle, "WEB_URL", DEFAULT_WEB_URL),
+            debug = parseBoolean(bundle, "DEBUG"),
+            fullscreen = parseBoolean(bundle, "FULLSCREEN"),
+            launchImage = parseBoolean(bundle, "LAUNCH_IMAGE"),
+            screenOn = parseBoolean(bundle, "SCREEN_ON"),
+            userAgent = parseString(bundle, "USER_AGENT", ""),
+            isHtml = parseBoolean(bundle, "IS_HTML")
         )
+    }
+
+    fun parseBoolean(bundle: Bundle?, key: String, default: Boolean = false): Boolean {
+        return parseString(bundle, key, default.toString()).toBooleanStrictOrNull() ?: default
+    }
+
+    fun parseString(bundle: Bundle?, key: String, default: String = ""): String {
+        return bundle?.getString(key, default) ?: default
     }
 }

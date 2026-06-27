@@ -39,6 +39,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.getSystemService
 import androidx.webkit.WebViewAssetLoader
+import com.xiaoshen.pakeplus.data.WebViewConfig
 import com.xiaoshen.pakeplus.util.AssetLoader
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -95,16 +96,20 @@ private data class BlobState(
 fun PakePlusWebView(
     webUrl: String,
     debug: Boolean,
-    userAgent: String,
     isHtml: Boolean,
     onLoadFinished: () -> Unit,
     onDownloadStarted: () -> Unit,
+    userAgent: String = "",
+    webViewConfig: WebViewConfig? = null,
+    reloadSignal: Int = 0,
+    onUrlChanged: (String) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val blobDownloads = remember { mutableStateMapOf<String, BlobState>() }
     val webViewRef = remember { mutableStateOf<WebView?>(null) }
+    var initialLoadDone by remember { mutableStateOf(false) }
 
     var pendingPermissionRequest by remember { mutableStateOf<PermissionRequest?>(null) }
     var pendingGeolocationCallback by remember {
@@ -150,7 +155,7 @@ fun PakePlusWebView(
         factory = { ctx ->
             WebView(ctx).apply {
                 webViewRef.value = this
-                initSettings(ctx, debug, userAgent)
+                initSettings(ctx, debug, userAgent, webViewConfig)
                 initBridge(this) { message ->
                     handleBlobMessage(
                         message,
@@ -168,6 +173,7 @@ fun PakePlusWebView(
                 webViewClient = PakeWebViewClient(
                     context = ctx,
                     assetLoader = assetLoader,
+                    onPageStarted = { _, url -> url?.let { onUrlChanged(it) } },
                     onPageFinished = { webView, _ ->
                         injectScripts(webView)
                         webView.evaluateJavascript(VIEWPORT_SCRIPT, null)
@@ -192,15 +198,25 @@ fun PakePlusWebView(
                     }
                 )
 
-                if (isHtml || webUrl.isBlank()) {
-                    loadUrl("https://appassets.androidplatform.net/assets/index.html")
-                } else {
-                    loadUrl(webUrl)
-                }
+                loadCurrentUrl(webUrl, isHtml)
             }
         },
         modifier = modifier.fillMaxSize()
     )
+
+    LaunchedEffect(webUrl, isHtml) {
+        if (initialLoadDone) {
+            webViewRef.value?.loadCurrentUrl(webUrl, isHtml)
+        } else {
+            initialLoadDone = true
+        }
+    }
+
+    LaunchedEffect(reloadSignal) {
+        if (reloadSignal > 0) {
+            webViewRef.value?.reload()
+        }
+    }
 
     DisposableEffect(Unit) {
         onDispose {
@@ -215,25 +231,32 @@ fun PakePlusWebView(
 }
 
 @SuppressLint("SetJavaScriptEnabled")
-private fun WebView.initSettings(context: Context, debug: Boolean, userAgent: String) {
+private fun WebView.initSettings(
+    context: Context,
+    debug: Boolean,
+    userAgent: String,
+    webViewConfig: WebViewConfig?
+) {
     settings.apply {
-        javaScriptEnabled = true
-        domStorageEnabled = true
+        javaScriptEnabled = webViewConfig?.javaScriptEnabled ?: true
+        domStorageEnabled = webViewConfig?.domStorageEnabled ?: true
         databaseEnabled = true
-        allowFileAccess = false
+        allowFileAccess = webViewConfig?.allowFileAccess ?: false
         allowContentAccess = false
         allowFileAccessFromFileURLs = false
         allowUniversalAccessFromFileURLs = false
-        loadWithOverviewMode = true
+        loadWithOverviewMode = webViewConfig?.loadWithOverviewMode ?: true
         useWideViewPort = true
-        setSupportZoom(false)
+        setSupportZoom(webViewConfig?.setSupportZoom ?: false)
         builtInZoomControls = false
         displayZoomControls = false
         mediaPlaybackRequiresUserGesture = false
         mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
         cacheMode = WebSettings.LOAD_DEFAULT
-        if (userAgent.isNotBlank()) {
-            this.userAgentString = userAgent
+        val effectiveUserAgent = userAgent.takeIf { it.isNotBlank() }
+            ?: webViewConfig?.userAgent?.takeIf { it.isNotBlank() } ?: ""
+        if (effectiveUserAgent.isNotBlank()) {
+            this.userAgentString = effectiveUserAgent
         }
     }
     setBackgroundColor(android.graphics.Color.TRANSPARENT)
@@ -242,6 +265,17 @@ private fun WebView.initSettings(context: Context, debug: Boolean, userAgent: St
     isVerticalScrollBarEnabled = false
     WebView.setWebContentsDebuggingEnabled(debug)
     CookieManager.getInstance().setAcceptCookie(true)
+    if (webViewConfig?.clearCache == true) {
+        clearCache(true)
+    }
+}
+
+private fun WebView.loadCurrentUrl(webUrl: String, isHtml: Boolean) {
+    if (isHtml || webUrl.isBlank()) {
+        loadUrl("https://appassets.androidplatform.net/assets/index.html")
+    } else {
+        loadUrl(webUrl)
+    }
 }
 
 private fun initBridge(webView: WebView, handler: (BlobDownloadBridge.Message) -> Unit) {
@@ -284,6 +318,7 @@ private fun initGesture(webView: WebView) {
 private class PakeWebViewClient(
     private val context: Context,
     private val assetLoader: WebViewAssetLoader,
+    private val onPageStarted: (WebView, String?) -> Unit,
     private val onPageFinished: (WebView, String?) -> Unit,
     private val onReceivedError: () -> Unit,
     private val onDownloadStarted: () -> Unit
@@ -317,6 +352,11 @@ private class PakeWebViewClient(
             return true
         }
         return false
+    }
+
+    override fun onPageStarted(view: WebView?, url: String?, favicon: android.graphics.Bitmap?) {
+        super.onPageStarted(view, url, favicon)
+        view?.let { onPageStarted(it, url) }
     }
 
     override fun onPageFinished(view: WebView?, url: String?) {
