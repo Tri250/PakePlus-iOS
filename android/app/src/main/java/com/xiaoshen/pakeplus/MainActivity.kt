@@ -28,11 +28,14 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.unit.dp
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import com.xiaoshen.pakeplus.data.AppConfig
 import com.xiaoshen.pakeplus.data.TabBarItem
 import com.xiaoshen.pakeplus.ui.components.BottomTabBar
@@ -54,11 +57,6 @@ class MainActivity : ComponentActivity() {
 
         val config = ConfigLoader.load(this)
 
-        // Keep screen on
-        if (config.phone.screenOn) {
-            window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-        }
-
         // Fullscreen / edge-to-edge
         enableEdgeToEdge()
         WindowCompat.setDecorFitsSystemWindows(window, false)
@@ -73,11 +71,34 @@ class MainActivity : ComponentActivity() {
                 val context = LocalContext.current
                 val scope = rememberCoroutineScope()
                 val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
+                val lifecycleOwner = LocalLifecycleOwner.current
 
                 var isWebLoaded by remember { mutableStateOf(false) }
                 var downloadHintVisible by remember { mutableStateOf(false) }
                 var menuExpanded by remember { mutableStateOf(false) }
                 var reloadSignal by remember { mutableIntStateOf(0) }
+
+                // Lifecycle-aware screen on control (matching iOS scenePhase behavior)
+                if (config.phone.screenOn) {
+                    androidx.compose.runtime.DisposableEffect(lifecycleOwner) {
+                        val observer = LifecycleEventObserver { _, event ->
+                            when (event) {
+                                Lifecycle.Event.ON_RESUME -> {
+                                    window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                                }
+                                Lifecycle.Event.ON_PAUSE -> {
+                                    window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                                }
+                                else -> {}
+                            }
+                        }
+                        lifecycleOwner.lifecycle.addObserver(observer)
+                        onDispose {
+                            lifecycleOwner.lifecycle.removeObserver(observer)
+                            window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                        }
+                    }
+                }
 
                 val tabBar = config.phone.tabBar
                 val siderMenu = config.phone.siderMenu
@@ -169,6 +190,7 @@ class MainActivity : ComponentActivity() {
                                             onUrlChanged = { displayedUrl = it },
                                             config = config,
                                             reloadSignal = reloadSignal,
+                                            isWebLoaded = isWebLoaded,
                                             onWebLoaded = {
                                                 isWebLoaded = true
                                                 splashReady = true
@@ -204,6 +226,7 @@ class MainActivity : ComponentActivity() {
                                         onUrlChanged = { displayedUrl = it },
                                         config = config,
                                         reloadSignal = reloadSignal,
+                                        isWebLoaded = isWebLoaded,
                                         onWebLoaded = {
                                             isWebLoaded = true
                                             splashReady = true
@@ -221,6 +244,7 @@ class MainActivity : ComponentActivity() {
                                 onUrlChanged = { displayedUrl = it },
                                 config = config,
                                 reloadSignal = reloadSignal,
+                                isWebLoaded = isWebLoaded,
                                 onWebLoaded = {
                                     isWebLoaded = true
                                     splashReady = true
@@ -280,6 +304,7 @@ private fun AppWebView(
     onUrlChanged: (String) -> Unit,
     config: AppConfig,
     reloadSignal: Int,
+    isWebLoaded: Boolean,
     onWebLoaded: () -> Unit,
     onDownloadStarted: () -> Unit,
     modifier: Modifier = Modifier
@@ -290,6 +315,7 @@ private fun AppWebView(
         isHtml = config.android.isHtml,
         webViewConfig = config.phone.webview,
         reloadSignal = reloadSignal,
+        isWebLoaded = isWebLoaded,
         onLoadFinished = onWebLoaded,
         onDownloadStarted = onDownloadStarted,
         onUrlChanged = { url ->

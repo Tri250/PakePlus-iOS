@@ -4,6 +4,7 @@ import android.Manifest
 import android.annotation.SuppressLint
 import android.app.DownloadManager
 import android.content.Context
+import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
@@ -37,6 +38,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.core.content.ContextCompat
 import androidx.core.content.getSystemService
 import androidx.webkit.WebViewAssetLoader
 import com.xiaoshen.pakeplus.data.WebViewConfig
@@ -103,6 +105,7 @@ fun PakePlusWebView(
     webViewConfig: WebViewConfig? = null,
     reloadSignal: Int = 0,
     onUrlChanged: (String) -> Unit = {},
+    isWebLoaded: Boolean = true,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -136,8 +139,10 @@ fun PakePlusWebView(
             .build()
     }
 
-    val injectScripts: (WebView) -> Unit = remember(debug, context) {
+    // Scripts injected at document start (matching iOS atDocumentStart behavior)
+    val injectEarlyScripts: (WebView) -> Unit = remember(debug, context) {
         { webView ->
+            // Bridge adapter must be available before page JS runs
             webView.evaluateJavascript(JS_BRIDGE_ADAPTER, null)
             if (debug) {
                 AssetLoader.loadAssetText(context, "vConsole.js")?.let { vConsole ->
@@ -173,9 +178,13 @@ fun PakePlusWebView(
                 webViewClient = PakeWebViewClient(
                     context = ctx,
                     assetLoader = assetLoader,
-                    onPageStarted = { _, url -> url?.let { onUrlChanged(it) } },
+                    onPageStarted = { webView, url ->
+                        url?.let { onUrlChanged(it) }
+                        // Inject scripts at document start (iOS atDocumentStart equivalent)
+                        injectEarlyScripts(webView)
+                    },
                     onPageFinished = { webView, _ ->
-                        injectScripts(webView)
+                        // Only inject viewport meta at document end (iOS atDocumentEnd equivalent)
                         webView.evaluateJavascript(VIEWPORT_SCRIPT, null)
                         onLoadFinished()
                     },
@@ -183,22 +192,45 @@ fun PakePlusWebView(
                     onDownloadStarted = onDownloadStarted
                 )
                 webChromeClient = PakeWebChromeClient(
+                    context = ctx,
                     onPermissionRequest = { request, permissions ->
-                        pendingPermissionRequest = request
-                        permissionLauncher.launch(permissions)
+                        // Check if all permissions already granted before showing dialog
+                        val allGranted = permissions.all {
+                            ContextCompat.checkSelfPermission(ctx, it) == PackageManager.PERMISSION_GRANTED
+                        }
+                        if (allGranted) {
+                            request.grant(request.resources)
+                        } else {
+                            pendingPermissionRequest = request
+                            permissionLauncher.launch(permissions)
+                        }
                     },
                     onGeolocationRequest = { callback ->
-                        pendingGeolocationCallback = callback
-                        permissionLauncher.launch(
-                            arrayOf(
-                                Manifest.permission.ACCESS_FINE_LOCATION,
-                                Manifest.permission.ACCESS_COARSE_LOCATION
+                        // Pre-check: if location permission already granted, auto-allow
+                        val fineGranted = ContextCompat.checkSelfPermission(
+                            ctx, Manifest.permission.ACCESS_FINE_LOCATION
+                        ) == PackageManager.PERMISSION_GRANTED
+                        val coarseGranted = ContextCompat.checkSelfPermission(
+                            ctx, Manifest.permission.ACCESS_COARSE_LOCATION
+                        ) == PackageManager.PERMISSION_GRANTED
+                        if (fineGranted || coarseGranted) {
+                            callback(true, true)
+                        } else {
+                            pendingGeolocationCallback = callback
+                            permissionLauncher.launch(
+                                arrayOf(
+                                    Manifest.permission.ACCESS_FINE_LOCATION,
+                                    Manifest.permission.ACCESS_COARSE_LOCATION
+                                )
                             )
-                        )
+                        }
                     }
                 )
 
-                loadCurrentUrl(webUrl, isHtml)
+                // Pre-request geolocation authorization (matching iOS prepareWebGeolocationAuthorization)
+                prepareGeolocationAuthorization(ctx, permissionLauncher)
+
+                loadCurrentUrl(webUrl, isHtml, ctx)
             }
         },
         modifier = modifier.fillMaxSize()
@@ -206,7 +238,7 @@ fun PakePlusWebView(
 
     LaunchedEffect(webUrl, isHtml) {
         if (initialLoadDone) {
-            webViewRef.value?.loadCurrentUrl(webUrl, isHtml)
+            webViewRef.value?.loadCurrentUrl(webUrl, isHtml, context)
         } else {
             initialLoadDone = true
         }
@@ -270,11 +302,48 @@ private fun WebView.initSettings(
     }
 }
 
-private fun WebView.loadCurrentUrl(webUrl: String, isHtml: Boolean) {
+private fun WebView.loadCurrentUrl(webUrl: String, isHtml: Boolean, context: Context) {
     if (isHtml || webUrl.isBlank()) {
         loadUrl("https://appassets.androidplatform.net/assets/index.html")
-    } else {
-        loadUrl(webUrl)
+        return
+    }
+    // URL host routing (matching iOS behavior)
+    val uri = Uri.parse(webUrl)
+    val host = uri.host?.lowercase() ?: ""
+    when {
+        host.contains("pakeplus.com") -> {
+            // Load local HTML for pakeplus.com host (matching iOS)
+            loadUrl("https://appassets.androidplatform.net/assets/index.html")
+        }
+        host.contains("password.com") -> {
+            // Load password entry page (matching iOS)
+            loadUrl("https://appassets.androidplatform.net/assets/index.html")
+        }
+        else -> loadUrl(webUrl)
+    }
+}
+
+/**
+ * Pre-request geolocation authorization at WebView creation time,
+ * matching iOS prepareWebGeolocationAuthorization() behavior.
+ */
+private fun prepareGeolocationAuthorization(
+    context: Context,
+    launcher: androidx.activity.result.ActivityResultLauncher<Array<String>>
+) {
+    val fineGranted = ContextCompat.checkSelfPermission(
+        context, Manifest.permission.ACCESS_FINE_LOCATION
+    ) == PackageManager.PERMISSION_GRANTED
+    val coarseGranted = ContextCompat.checkSelfPermission(
+        context, Manifest.permission.ACCESS_COARSE_LOCATION
+    ) == PackageManager.PERMISSION_GRANTED
+    if (!fineGranted && !coarseGranted) {
+        launcher.launch(
+            arrayOf(
+                Manifest.permission.ACCESS_FINE_LOCATION,
+                Manifest.permission.ACCESS_COARSE_LOCATION
+            )
+        )
     }
 }
 
@@ -376,6 +445,7 @@ private class PakeWebViewClient(
 }
 
 private class PakeWebChromeClient(
+    private val context: Context,
     private val onPermissionRequest: (PermissionRequest, Array<String>) -> Unit,
     private val onGeolocationRequest: ((Boolean, Boolean) -> Unit) -> Unit
 ) : WebChromeClient() {
